@@ -1,4 +1,13 @@
 export default {
+  // 1. CRON TRIGGER: Inaiamsha seva ya PHP kila dakika 1
+  async scheduled(event, env, ctx) {
+    const profreehost_url = "https://bnheatmap.onrender.com";
+    ctx.waitUntil(
+      fetch(profreehost_url, { headers: { "User-Agent": "Cloudflare-Cron-Trigger" } })
+    );
+  },
+  //===≠====XXXXXXXXX
+  
   async fetch(request, env) {
     const mbinu = request.method;
 
