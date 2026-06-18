@@ -1,17 +1,8 @@
 export default {
-  // 1. CRON TRIGGER: Inaiamsha seva ya PHP kila dakika 1
-  async scheduled(event, env, ctx) {
-    const profreehost_url = "https://bnheatmap.onrender.com";
-    ctx.waitUntil(
-      fetch(profreehost_url, { headers: { "User-Agent": "Cloudflare-Cron-Trigger" } })
-    );
-  },
-  //===≠====XXXXXXXXX
-  
   async fetch(request, env) {
     const mbinu = request.method;
 
-    // 1. NJIA YA POST: Inapokea data kutoka RENDER (Binance pekee)
+    // 1. NJIA YA POST: Inapokea data kutoka Hugging Face (Binance pekee)
     if (mbinu === 'POST') {
       try {
         const data = await request.json();
@@ -20,38 +11,48 @@ export default {
         
         const statements = [];
 
-        // Inserter ya Bids za Binance
+        // Chakata Bids
         for (const bid of bids) {
-          statements.push(
-            env.DB.prepare(`
-              INSERT INTO bids (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
-              ON CONFLICT(bei, exchange) DO UPDATE SET kiasi = EXCLUDED.kiasi, dola = EXCLUDED.dola, muda_kusasishwa = CURRENT_TIMESTAMP
-            `).bind(bid.bei, bid.kiasi, bid.dola, bid.exchange)
-          );
+          if (parseFloat(bid.kiasi) === 0) {
+            // REKEBISHO: Kama kiasi ni 0, ifute kabisa kwenye database
+            statements.push(
+              env.DB.prepare(`DELETE FROM bids WHERE bei = ?1 AND exchange = ?2`).bind(bid.bei, bid.exchange)
+            );
+          } else {
+            // Kama kiasi kipo, iingize au kuisasisha
+            statements.push(
+              env.DB.prepare(`
+                INSERT INTO bids (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(bei, exchange) DO UPDATE SET kiasi = EXCLUDED.kiasi, dola = EXCLUDED.dola, muda_kusasishwa = CURRENT_TIMESTAMP
+              `).bind(bid.bei, bid.kiasi, bid.dola, bid.exchange)
+            );
+          }
         }
 
-        // Inserter ya Asks za Binance
+        // Chakata Asks
         for (const ask of asks) {
-          statements.push(
-            env.DB.prepare(`
-              INSERT INTO asks (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
-              ON CONFLICT(bei, exchange) DO UPDATE SET kiasi = EXCLUDED.kiasi, dola = EXCLUDED.dola, muda_kusasishwa = CURRENT_TIMESTAMP
-            `).bind(ask.bei, ask.kiasi, ask.dola, ask.exchange)
-          );
+          if (parseFloat(ask.kiasi) === 0) {
+            // REKEBISHO: Kama kiasi ni 0, ifute kabisa kwenye database
+            statements.push(
+              env.DB.prepare(`DELETE FROM asks WHERE bei = ?1 AND exchange = ?2`).bind(ask.bei, ask.exchange)
+            );
+          } else {
+            // Kama kiasi kipo, iingize au kuisasisha
+            statements.push(
+              env.DB.prepare(`
+                INSERT INTO asks (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(bei, exchange) DO UPDATE SET kiasi = EXCLUDED.kiasi, dola = EXCLUDED.dola, muda_kusasishwa = CURRENT_TIMESTAMP
+              `).bind(ask.bei, ask.kiasi, ask.dola, ask.exchange)
+            );
+          }
         }
 
-        // Sukuma kwenye D1 Database
+        // Sukuma mabadiliko yote kwa mkupuo (Batch) kwenye D1
         if (statements.length > 0) {
           await env.DB.batch(statements);
         }
 
-        // Fagio maalum la Binance (Inafuta tu oda za Binance zilizozidi dakika 2)
-        await env.DB.batch([
-          env.DB.prepare("DELETE FROM bids WHERE exchange = 'Binance' AND muda_kusasishwa < datetime('now', '-2 minute')"),
-          env.DB.prepare("DELETE FROM asks WHERE exchange = 'Binance' AND muda_kusasishwa < datetime('now', '-2 minute')")
-        ]);
-
-        return new Response(JSON.stringify({ success: true, kutoka: "Binance Worker" }), {
+        return new Response(JSON.stringify({ success: true, kutoka: "Binance D1 Worker" }), {
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
 
@@ -60,7 +61,6 @@ export default {
       }
     }
 
-    // Kama mtu akaifungua kwa bahati mbaya kwenye browser
     return new Response("Hapa ni mlango wa POST wa Binance tu!", { status: 400 });
   }
 };
