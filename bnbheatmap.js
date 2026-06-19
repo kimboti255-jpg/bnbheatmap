@@ -16,18 +16,18 @@ export default {
           const kiasi = parseFloat(bid.kiasi);
 
           if (kiasi === 0) {
-            // Ikitokea bei ileile imetumwa ina kiasi 0, ifutwe mara moja kwenye database!
+            // Futa kwa kutumia mbinu ya masafa kuzuia floating point error
             statements.push(
-              env.DB.prepare("DELETE FROM bids WHERE bei = ?1 AND exchange = ?2").bind(bei, bid.exchange)
+              env.DB.prepare("DELETE FROM bids WHERE ABS(bei - ?1) < 0.0001 AND exchange = ?2").bind(bei, bid.exchange)
             );
           } else {
-            // Kama ipo isasishe kiasi tu, kama haipo iingize kama mpya na kuacha muda_kuingizwa utulie
             statements.push(
               env.DB.prepare(`
                 INSERT INTO bids (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
                 ON CONFLICT(bei, exchange) DO UPDATE SET 
                   kiasi = EXCLUDED.kiasi, 
-                  dola = EXCLUDED.dola
+                  dola = EXCLUDED.dola,
+                  muda_kuingizwa = CURRENT_TIMESTAMP
               `).bind(bei, kiasi, bid.dola, bid.exchange)
             );
           }
@@ -40,7 +40,7 @@ export default {
 
           if (kiasi === 0) {
             statements.push(
-              env.DB.prepare("DELETE FROM asks WHERE bei = ?1 AND exchange = ?2").bind(bei, ask.exchange)
+              env.DB.prepare("DELETE FROM asks WHERE ABS(bei - ?1) < 0.0001 AND exchange = ?2").bind(bei, ask.exchange)
             );
           } else {
             statements.push(
@@ -48,18 +48,22 @@ export default {
                 INSERT INTO asks (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
                 ON CONFLICT(bei, exchange) DO UPDATE SET 
                   kiasi = EXCLUDED.kiasi, 
-                  dola = EXCLUDED.dola
+                  dola = EXCLUDED.dola,
+                  muda_kuingizwa = CURRENT_TIMESTAMP
               `).bind(bei, kiasi, ask.dola, ask.exchange)
             );
           }
         }
 
-        // Tekeleza batch hapa
+        // UFAGUZI WA USALAMA: Futa kabisa oda zote zilizobaki na kiasi cha 0 kimakosa
+        statements.push(env.DB.prepare("DELETE FROM bids WHERE kiasi <= 0"));
+        statements.push(env.DB.prepare("DELETE FROM asks WHERE kiasi <= 0"));
+
         if (statements.length > 0) {
           await env.DB.batch(statements);
         }
 
-        return new Response(JSON.stringify({ success: true, message: "Imesinkishwa vizuri!" }), {
+        return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
 
@@ -68,18 +72,22 @@ export default {
       }
     }
 
-    // NJIA YA GET: INASOMA DATA KWA AJILI YA WEBSITE YAKO (KUCHORA HEATMAP)
+    // NJIA YA GET: WEBSITE INAPOSOMA DATA (HAPA TUNACHUJA TU ZENYE KIASI KIKUBWA KULIKO 0)
     try {
       const bidsResult = await env.DB.prepare(`
         SELECT bei, kiasi, dola, exchange, muda_kuingizwa,
         ROUND((strftime('%s', 'now') - strftime('%s', muda_kuingizwa)) / 60.0, 1) AS dakika_sokoni 
-        FROM bids ORDER BY bei DESC
+        FROM bids 
+        WHERE kiasi > 0 
+        ORDER BY bei DESC
       `).all();
 
       const asksResult = await env.DB.prepare(`
         SELECT bei, kiasi, dola, exchange, muda_kuingizwa,
         ROUND((strftime('%s', 'now') - strftime('%s', muda_kuingizwa)) / 60.0, 1) AS dakika_sokoni 
-        FROM asks ORDER BY bei ASC
+        FROM asks 
+        WHERE kiasi > 0 
+        ORDER BY bei ASC
       `).all();
 
       return new Response(JSON.stringify({ bids: bidsResult.results, asks: asksResult.results }, null, 2), {
