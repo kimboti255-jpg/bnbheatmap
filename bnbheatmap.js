@@ -2,7 +2,6 @@ export default {
   async fetch(request, env) {
     const mbinu = request.method;
 
-    // NJIA YA POST: INAPOKEA DATA NA KUIWEKA AU KUIFUTA KWENYE DATABASE
     if (mbinu === 'POST') {
       try {
         const data = await request.json();
@@ -11,15 +10,18 @@ export default {
         
         const statements = [];
 
-        // SHUGHULIKIA WANUNUZI (BIDS)
+        // 1. CHAKATA BIDS
         for (const bid of bids) {
-          if (bid.kiasi === 0) {
-            // A: Oda ya 0 imekuja? Futa kabisa kwenye Database!
+          const bei = parseFloat(bid.bei);
+          const kiasi = parseFloat(bid.kiasi);
+
+          if (kiasi === 0) {
+            // LOGIC: Ikitokea bei ileile imetumwa ina kiasi 0, ifutwe kabisa kwenye database!
             statements.push(
-              env.DB.prepare(`DELETE FROM bids WHERE bei = ?1 AND exchange = ?2`).bind(bid.bei, bid.exchange)
+              env.DB.prepare(`DELETE FROM bids WHERE bei = ?1 AND exchange = ?2`).bind(bei, bid.exchange)
             );
           } else {
-            // B: Ni Nyangumi mzima? Ingiza au Sasisha kiasi na dola kikiwa kimebadilika
+            // LOGIC: Kama ipo isasishe kiasi, kama haipo iingize na ilinde muda_kuingizwa
             statements.push(
               env.DB.prepare(`
                 INSERT INTO bids (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
@@ -27,20 +29,21 @@ export default {
                   kiasi = EXCLUDED.kiasi, 
                   dola = EXCLUDED.dola, 
                   muda_kusasishwa = CURRENT_TIMESTAMP
-              `).bind(bid.bei, bid.kiasi, bid.dola, bid.exchange)
+              `).bind(bei, kiasi, bid.dola, bid.exchange)
             );
           }
         }
 
-        // SHUGHULIKIA WAUZAJI (ASKS)
+        // 2. CHAKATA ASKS
         for (const ask of asks) {
-          if (ask.kiasi === 0) {
-            // Futa kabisa kwenye Database!
+          const bei = parseFloat(ask.bei);
+          const kiasi = parseFloat(ask.kiasi);
+
+          if (kiasi === 0) {
             statements.push(
-              env.DB.prepare(`DELETE FROM asks WHERE bei = ?1 AND exchange = ?2`).bind(ask.bei, ask.exchange)
+              env.DB.prepare(`DELETE FROM asks WHERE bei = ?1 AND exchange = ?2`).bind(bei, ask.exchange)
             );
           } else {
-            // Ingiza au Sasisha kiasi na dola
             statements.push(
               env.DB.prepare(`
                 INSERT INTO asks (bei, kiasi, dola, exchange) VALUES (?1, ?2, ?3, ?4)
@@ -48,17 +51,25 @@ export default {
                   kiasi = EXCLUDED.kiasi, 
                   dola = EXCLUDED.dola, 
                   muda_kusasishwa = CURRENT_TIMESTAMP
-              `).bind(ask.bei, ask.kiasi, ask.dola, ask.exchange)
+              `).bind(bei, kiasi, ask.dola, ask.exchange)
             );
           }
         }
 
-        // Tekeleza zote kwa mkupuo (Batch)
+        // Tekeleza mabadiliko yote kwa mkupuo
         if (statements.length > 0) {
           await env.DB.batch(statements);
         }
 
-        return new Response(JSON.stringify({ success: true, message: "Imesasishwa!" }), {
+        // UFAGUZI WA KIOTOMATIKI (Kama ule wa PHP yako):
+        // Futa oda yoyote ya zamani ambayo haikupata sasisho ndani ya sekunde 30 zilizopita
+        const cleanStatements = [
+          env.DB.prepare("DELETE FROM bids WHERE muda_kusasishwa < datetime('now', '-30 seconds')"),
+          env.DB.prepare("DELETE FROM asks WHERE muda_kusasishwa < datetime('now', '-30 seconds')")
+        ];
+        await env.DB.batch(cleanStatements);
+
+        return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
 
@@ -67,7 +78,7 @@ export default {
       }
     }
 
-    // NJIA YA GET: INASOMA DATA KWA AJILI YA FRONTEND/WEBSITE YAKO
+    // NJIA YA GET: INASOMA DATA KWA AJILI YA HTML FRONTEND YAKO
     try {
       const bidsResult = await env.DB.prepare(`
         SELECT *, ROUND((strftime('%s', 'now') - strftime('%s', muda_kuingizwa)) / 60.0, 1) AS dakika_sokoni 
